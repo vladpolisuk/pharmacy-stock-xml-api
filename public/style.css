@@ -57,7 +57,8 @@ a { color: var(--primary); text-decoration-thickness: 1px; text-underline-offset
 .view-message { margin: 0; padding: 14px 16px; color: #a42c25; background: #fce9e7; font-size: 14px; }
 h3 { margin: 0 0 9px; font-size: 14px; color: #405371; font-weight: 600; }
 pre { margin: 0; padding: 16px; background: #f6f8fa; color: #24292f; border: 1px solid #dce3ee; font-size: 12px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; overflow: auto; max-height: 460px; }
-#response-body { min-height: 360px; max-height: calc(100vh - 260px); }
+#xml-view, #response-body { max-height: 500px; }
+#response-body { min-height: 360px; }
 .syntax-punctuation { color: #6e7781; }
 .syntax-tag, .syntax-header { color: #0550ae; }
 .syntax-attribute { color: #8250df; }
