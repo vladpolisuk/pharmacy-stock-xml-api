@@ -382,10 +382,13 @@ location = /api/stock {
     include /etc/nginx/fastcgi_params;
     fastcgi_param SCRIPT_FILENAME /var/www/pharmacy/public/api.php;
     fastcgi_pass unix:/run/php-fpm/pharmacy.sock;
+    fastcgi_hide_header X-Content-Type-Options;
 }
 ```
 
 Это точный маршрут **`/api/stock` без завершающего `/`**. Nginx передаёт запрос PHP-FPM, а `/` открывает простую HTML-страницу. Входите в API по этому URL.
+
+`X-Content-Type-Options` добавляет Nginx. Одноимённый заголовок от PHP скрывается, чтобы в HTTP-ответе он присутствовал один раз.
 
 [Передача запросов в FastCGI из Nginx](https://nginx.org/en/docs/http/ngx_http_fastcgi_module.html).
 
@@ -609,7 +612,7 @@ getsebool httpd_can_network_connect_db
 
 ## 17. Порядок демонстрации преподавателю
 
-1. Откройте `http://127.0.0.1:8082/` и выберите **Все записи**. Покажите GET-адрес, HTTP 200, `Content-Type: application/xml`, XML и три строки таблицы.
+1. Откройте `http://127.0.0.1:8082/` и выберите **Все записи**. Покажите GET-адрес, HTTP 200 и **Записей: 3**. Во вкладке XML покажите ответ, во вкладке View — три строки таблицы. Заголовок `Content-Type: application/xml` доступен в раскрывающемся блоке **Заголовки ответа**.
 2. Нажмите **ID 1**, затем **ID 2**. Покажите, как изменяются параметр адреса, XML и единственная строка таблицы.
 3. Выберите **Два фильтра** и покажите одновременное применение условий по количеству и дате.
 4. Введите собственный фильтр, например название «препарат», и нажмите **Выполнить GET**.
