@@ -86,6 +86,74 @@ function showRecords(xml) {
   return records.length;
 }
 
+function appendSyntax(parent, className, text) {
+  const span = document.createElement('span');
+  span.className = className;
+  span.textContent = text;
+  parent.appendChild(span);
+}
+
+function appendXMLText(parent, text) {
+  let offset = 0;
+  for (const match of text.matchAll(/&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);|\b\d+(?:\.\d+)?\b/gi)) {
+    parent.appendChild(document.createTextNode(text.slice(offset, match.index)));
+    appendSyntax(parent, match[0].startsWith('&') ? 'syntax-entity' : 'syntax-number', match[0]);
+    offset = match.index + match[0].length;
+  }
+  parent.appendChild(document.createTextNode(text.slice(offset)));
+}
+
+function appendXMLTag(parent, text) {
+  const tag = text.match(/^(<\?|<\/?)([\w:.-]+)([\s\S]*?)(\?>|\/?>)$/u);
+  if (!tag) {
+    appendSyntax(parent, 'syntax-comment', text);
+    return;
+  }
+  appendSyntax(parent, 'syntax-punctuation', tag[1]);
+  appendSyntax(parent, 'syntax-tag', tag[2]);
+  let offset = 0;
+  for (const attribute of tag[3].matchAll(/([A-Za-z_:][\w:.-]*)(\s*=\s*)("[^"]*"|'[^']*')/g)) {
+    parent.appendChild(document.createTextNode(tag[3].slice(offset, attribute.index)));
+    appendSyntax(parent, 'syntax-attribute', attribute[1]);
+    appendSyntax(parent, 'syntax-punctuation', attribute[2]);
+    appendSyntax(parent, 'syntax-string', attribute[3]);
+    offset = attribute.index + attribute[0].length;
+  }
+  parent.appendChild(document.createTextNode(tag[3].slice(offset)));
+  appendSyntax(parent, 'syntax-punctuation', tag[4]);
+}
+
+function highlightXML(text) {
+  const fragment = document.createDocumentFragment();
+  let offset = 0;
+  const tokens = /<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<\?[\s\S]*?\?>|<\/?[A-Za-z_](?:[^"'<>]|"[^"]*"|'[^']*')*>/g;
+  for (const match of text.matchAll(tokens)) {
+    appendXMLText(fragment, text.slice(offset, match.index));
+    if (match[0].startsWith('<!--')) appendSyntax(fragment, 'syntax-comment', match[0]);
+    else if (match[0].startsWith('<![CDATA[')) appendSyntax(fragment, 'syntax-string', match[0]);
+    else appendXMLTag(fragment, match[0]);
+    offset = match.index + match[0].length;
+  }
+  appendXMLText(fragment, text.slice(offset));
+  responseBody.replaceChildren(fragment);
+}
+
+function highlightHeaders(text) {
+  const fragment = document.createDocumentFragment();
+  text.split('\n').forEach((line, index) => {
+    if (index) fragment.appendChild(document.createTextNode('\n'));
+    const colon = line.indexOf(':');
+    if (colon < 1) {
+      fragment.appendChild(document.createTextNode(line));
+      return;
+    }
+    appendSyntax(fragment, 'syntax-header', line.slice(0, colon));
+    appendSyntax(fragment, 'syntax-punctuation', ':');
+    appendSyntax(fragment, 'syntax-string', line.slice(colon + 1));
+  });
+  responseHeaders.replaceChildren(fragment);
+}
+
 async function runRequest() {
   controller?.abort();
   const requestController = new AbortController();
@@ -118,9 +186,8 @@ async function runRequest() {
     if (requestId !== activeRequest) return;
     httpStatus.textContent = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
     httpStatus.classList.add(response.ok ? 'success' : 'failure');
-    responseHeaders.textContent = [...response.headers]
-      .map(([name, value]) => `${name}: ${value}`).join('\n');
-    responseBody.textContent = text;
+    highlightHeaders([...response.headers].map(([name, value]) => `${name}: ${value}`).join('\n'));
+    highlightXML(text);
 
     const xml = new DOMParser().parseFromString(text, 'application/xml');
     if (xml.querySelector('parsererror')) {
