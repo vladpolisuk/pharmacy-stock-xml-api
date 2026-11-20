@@ -52,32 +52,6 @@ git clone https://github.com/vladpolisuk/pharmacy-stock-xml-api.git "$HOME/pharm
 
 Пароль в `config/config.php`, SQL и инструкции — общий учебный пример. Для другого стенда задайте собственный пароль пользователя БД и укажите его в `/etc/pharmacy-lab/config.php`. Рабочие настройки и пароли храните вне репозитория.
 
-## Передача изменений через Git
-
-На Windows, из каталога проекта:
-
-```powershell
-git add .
-git commit -m "Update XML API"
-git push
-```
-
-На Fedora, после первоначального клонирования:
-
-```bash
-cd "$HOME/pharmacy-lab"
-git pull --ff-only
-```
-
-`git pull` обновляет исходники в `~/pharmacy-lab`. Если приложение уже размещено по инструкции в `/var/www/pharmacy`, после изменения кода обновите файлы сайта:
-
-```bash
-sudo cp -r "$HOME/pharmacy-lab/public" "$HOME/pharmacy-lab/src" /var/www/pharmacy/
-sudo restorecon -R /var/www/pharmacy
-```
-
-Изменения конфигураций Nginx, PHP-FPM и структуры БД применяются отдельно по инструкции.
-
 ## Проверка
 
 После настройки сервера внутри Fedora:
