@@ -106,7 +106,7 @@ sudo bash "$HOME/pharmacy-lab/scripts/apply.sh"
 curl -i http://localhost/api/stock
 curl -o medicine-stock.xml 'http://localhost/api/stock?download=1'
 curl -i -X POST http://localhost/api/stock
-python3 tests/test_api.py
+python3 "$HOME/pharmacy-lab/tests/test_api.py"
 ```
 
 Ожидаются XML с тремя записями, скачиваемый XML и HTTP 405 для POST. Для проверки с Windows откройте `http://IP-Fedora/` и `http://IP-Fedora/api/stock`.
