@@ -14,22 +14,23 @@ php-fpm -t
 
 install -d -o root -g root -m 0700 /var/backups/pharmacy-lab
 backup_dir="$(mktemp -d /var/backups/pharmacy-lab/update.XXXXXXXX)"
-cp -a /var/www/pharmacy/public/api.php "$backup_dir/api.php"
-cp -a /var/www/pharmacy/src/stock.php "$backup_dir/stock.php"
+cp -a /var/www/pharmacy/public /var/www/pharmacy/src "$backup_dir/"
 
 rollback() {
     trap - ERR
-    echo "Update failed; restoring PHP files from $backup_dir" >&2
-    cp -a "$backup_dir/api.php" /var/www/pharmacy/public/api.php
-    cp -a "$backup_dir/stock.php" /var/www/pharmacy/src/stock.php
-    restorecon /var/www/pharmacy/public/api.php /var/www/pharmacy/src/stock.php
+    echo "Update failed; restoring application files from $backup_dir" >&2
+    cp -a "$backup_dir/public" "$backup_dir/src" /var/www/pharmacy/
+    restorecon -R /var/www/pharmacy/public /var/www/pharmacy/src
     systemctl reload php-fpm
 }
 trap rollback ERR
 
 install -o root -g root -m 0644 "$project_dir/src/stock.php" /var/www/pharmacy/src/stock.php
 install -o root -g root -m 0644 "$project_dir/public/api.php" /var/www/pharmacy/public/api.php
-restorecon /var/www/pharmacy/public/api.php /var/www/pharmacy/src/stock.php
+for file in index.html app.js style.css; do
+    install -o root -g root -m 0644 "$project_dir/public/$file" "/var/www/pharmacy/public/$file"
+done
+restorecon -R /var/www/pharmacy/public /var/www/pharmacy/src
 systemctl reload php-fpm
 verified=0
 for attempt in 1 2 3 4 5; do
@@ -41,6 +42,8 @@ for attempt in 1 2 3 4 5; do
     sleep 1
 done
 [[ $verified -eq 1 ]]
+curl --fail --silent --show-error --max-time 5 http://127.0.0.1/ \
+    | grep -q 'id="request-url"'
 
 trap - ERR
-printf 'API updated. Backup: %s\n' "$backup_dir"
+printf 'Application updated. Backup: %s\n' "$backup_dir"
