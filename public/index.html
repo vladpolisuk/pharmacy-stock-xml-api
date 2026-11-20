@@ -47,19 +47,15 @@
         <button type="button" data-example="export" aria-pressed="false">Экспорт XML</button>
       </div>
 
+    </section>
+
+    <section class="panel" aria-labelledby="response-heading" id="response-panel" aria-busy="false">
+      <div class="section-title"><h2 id="response-heading"><span class="step">2</span> Ответ сервера</h2><span class="http-status" id="http-status">Ожидание</span></div>
       <div class="request-box">
         <div class="request-line"><span class="method">GET</span><code id="request-url"></code></div>
         <p id="request-hint" hidden></p>
         <div class="request-links"><a id="open-xml" href="/api/stock" target="_blank" rel="noopener">Открыть XML отдельно ↗</a><a id="download-xml" href="/api/stock?download=1">Скачать XML</a></div>
       </div>
-    </section>
-
-    <section class="panel" aria-labelledby="response-heading" id="response-panel" aria-busy="false">
-      <div class="section-title"><h2 id="response-heading"><span class="step">2</span> Ответ сервера</h2><span class="http-status" id="http-status">Ожидание</span></div>
-      <details class="headers-disclosure">
-        <summary>Заголовки ответа</summary>
-        <pre id="response-headers" tabindex="0">—</pre>
-      </details>
       <div class="response-toolbar">
         <p id="status" role="status" aria-live="polite">Записей: —</p>
         <div class="response-tabs" role="tablist" aria-label="Представление ответа">
@@ -80,6 +76,10 @@
           </table>
         </div>
       </div>
+      <details class="headers-disclosure">
+        <summary>Заголовки ответа</summary>
+        <pre id="response-headers" tabindex="0">—</pre>
+      </details>
     </section>
     <noscript>Для выполнения запросов на этой странице включите JavaScript. Сам XML доступен по адресу /api/stock.</noscript>
   </main>
