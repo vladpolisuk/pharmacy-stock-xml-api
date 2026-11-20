@@ -11,7 +11,42 @@
 | `GET /api/stock?download=1` | Скачивание файла `medicine-stock.xml` |
 | `HEAD /api/stock` | Заголовки ответа без тела |
 
-API возвращает `Content-Type: application/xml; charset=UTF-8`. Другие методы получают HTTP 405 и XML с ошибкой. Если база недоступна, возвращается HTTP 503 и XML с ошибкой.
+API возвращает `Content-Type: application/xml; charset=UTF-8`. Некорректные параметры получают HTTP 400 и XML с кодом `invalid_parameter`. Другие методы получают HTTP 405. Если база недоступна, возвращается HTTP 503.
+
+## URI-параметры API
+
+Параметры передаются в строке запроса после `?`. Несколько параметров соединяются через `&`; условия применяются одновременно.
+
+| Параметр | Фильтр |
+|---|---|
+| `balance_id=1` | Остаток с указанным идентификатором |
+| `drug_name=препарат` | Название содержит заданный текст без учёта регистра |
+| `batch_number=00021-A` | Точное совпадение номера партии |
+| `storage_temperature=+2…+8 °C` | Точное совпадение температуры хранения |
+| `min_quantity=1` | Количество не меньше указанного, включая границу |
+| `max_quantity=100` | Количество не больше указанного, включая границу |
+| `expiry_after=2027-01-01` | Срок годности не раньше даты, включая границу |
+| `expiry_before=2027-12-31` | Срок годности не позже даты, включая границу |
+| `download=1` | Скачать результат с теми же фильтрами |
+
+Примеры:
+
+```text
+/api/stock?balance_id=1
+/api/stock?min_quantity=1&expiry_before=2027-12-31
+/api/stock?batch_number=00021-A&download=1
+```
+
+Кириллицу и специальные символы кодируйте средствами браузера или `curl --get --data-urlencode`:
+
+```bash
+curl --get --data-urlencode 'drug_name=препарат' 'http://localhost/api/stock'
+curl --get --data-urlencode 'storage_temperature=+2…+8 °C' 'http://localhost/api/stock'
+```
+
+Без фильтров возвращаются все записи; при отсутствии совпадений — HTTP 200 и пустой `<stock_balances/>`. Идентификатор — целое число от 1, количество — от 0; верхняя граница — 4294967295. Даты задаются в формате `YYYY-MM-DD`. Пустое значение фильтра пропускается. Неизвестные параметры, массивы, ошибочные даты и перевёрнутые диапазоны отклоняются с HTTP 400.
+
+Значения передаются в SQL через PDO `prepare` и `bindValue`, с отключённой эмуляцией подготовленных запросов. Символы `%` и `_` в поиске по названию обозначают буквальные символы.
 
 ## Поля
 
@@ -33,6 +68,8 @@ API возвращает `Content-Type: application/xml; charset=UTF-8`. Дру�
 - `public/index.html`, `public/app.js`, `public/style.css` — простой интерфейс, который получает данные из API.
 - `database/schema.sql` — база, таблица, учебные записи и пользователь с правом SELECT.
 - `config/` — учебные настройки подключения, Nginx, PHP-FPM и MariaDB.
+- `scripts/apply.sh` — обновление двух PHP-файлов работающего стенда с резервной копией.
+- `tests/test_api.py` — HTTP-проверки фильтров и ошибок на трёх исходных учебных записях.
 - [GUIDE_RU.md](GUIDE_RU.md) — инструкция от установки Fedora VM до проверки API с Windows.
 
 ## Развёртывание
@@ -52,6 +89,15 @@ git clone https://github.com/vladpolisuk/pharmacy-stock-xml-api.git "$HOME/pharm
 
 Пароль в `config/config.php`, SQL и инструкции — общий учебный пример. Для другого стенда задайте собственный пароль пользователя БД и укажите его в `/etc/pharmacy-lab/config.php`. Рабочие настройки и пароли храните вне репозитория.
 
+Для обновления уже настроенного стенда:
+
+```bash
+git -C "$HOME/pharmacy-lab" pull --ff-only
+sudo bash "$HOME/pharmacy-lab/scripts/apply.sh"
+```
+
+Скрипт проверяет PHP и текущие конфигурации, сохраняет прежние PHP-файлы в `/var/backups/pharmacy-lab/`, устанавливает новую версию, восстанавливает SELinux-контексты и перезагружает PHP-FPM. Текущие настройки подключения, Nginx и данные MariaDB сохраняются. При ошибке установки прежние PHP-файлы восстанавливаются автоматически.
+
 ## Проверка
 
 После настройки сервера внутри Fedora:
@@ -60,6 +106,7 @@ git clone https://github.com/vladpolisuk/pharmacy-stock-xml-api.git "$HOME/pharm
 curl -i http://localhost/api/stock
 curl -o medicine-stock.xml 'http://localhost/api/stock?download=1'
 curl -i -X POST http://localhost/api/stock
+python3 tests/test_api.py
 ```
 
 Ожидаются XML с тремя записями, скачиваемый XML и HTTP 405 для POST. Для проверки с Windows откройте `http://IP-Fedora/` и `http://IP-Fedora/api/stock`.

@@ -15,15 +15,27 @@ if (!in_array($_SERVER['REQUEST_METHOD'], ['GET', 'HEAD'], true)) {
 }
 
 try {
-    $xml = stockXml(readStock());
-} catch (Throwable $error) {
-    error_log('Pharmacy API: ' . $error->getMessage());
-    http_response_code(503);
-    echo errorXml('database_unavailable', 'Не удалось получить данные из базы.');
+    $filters = stockFilters($_GET);
+} catch (InvalidArgumentException $error) {
+    http_response_code(400);
+    if ($_SERVER['REQUEST_METHOD'] !== 'HEAD') {
+        echo errorXml('invalid_parameter', $error->getMessage());
+    }
     exit;
 }
 
-if (($_GET['download'] ?? '') === '1') {
+try {
+    $xml = stockXml(readStock($filters));
+} catch (Throwable $error) {
+    error_log('Pharmacy API: ' . $error->getMessage());
+    http_response_code(503);
+    if ($_SERVER['REQUEST_METHOD'] !== 'HEAD') {
+        echo errorXml('database_unavailable', 'Не удалось получить данные из базы.');
+    }
+    exit;
+}
+
+if (trim($_GET['download'] ?? '') === '1') {
     header('Content-Disposition: attachment; filename="medicine-stock.xml"');
 }
 

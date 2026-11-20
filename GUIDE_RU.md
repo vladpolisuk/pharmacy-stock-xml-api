@@ -318,7 +318,14 @@ return [
 
 Веб-корень сайта будет `/var/www/pharmacy/public`. Настройки подключения находятся отдельно и читаются PHP.
 
-Если после завершения первичной настройки понадобится применить новые изменения из GitHub, сначала обновите исходники через `git -C "$HOME/pharmacy-lab" pull --ff-only`, затем повторите копирование `public` и `src` в `/var/www/pharmacy` и выполните `sudo restorecon -R /var/www/pharmacy`. Сам `git pull` обновляет каталог исходников. Базу из пункта 8 повторно создавать не нужно; настройки подключения в `/etc/pharmacy-lab/config.php` сохраняются.
+Если стенд уже настроен и нужно обновить PHP-код API, выполните:
+
+```bash
+git -C "$HOME/pharmacy-lab" pull --ff-only
+sudo bash "$HOME/pharmacy-lab/scripts/apply.sh"
+```
+
+Скрипт сохраняет прежние PHP-файлы в `/var/backups/pharmacy-lab/`, проверяет конфигурации, устанавливает код, восстанавливает SELinux-контексты и перезагружает PHP-FPM. При ошибке установки восстанавливается прежний код. База и настройки подключения в `/etc/pharmacy-lab/config.php` сохраняются. Сам `git pull` обновляет каталог исходников; установка в веб-каталог выполняется отдельной командой с `sudo`.
 
 ## 10. Настроить PHP-FPM и SELinux
 
@@ -442,8 +449,47 @@ curl -i -X POST http://127.0.0.1/api/stock
 |---|---|---|
 | Получены данные | `200` | `<stock_balances>…</stock_balances>` |
 | Таблица пустая | `200` | `<stock_balances/>` |
+| Некорректный URI-параметр | `400` | XML `<error>` с кодом `invalid_parameter` |
 | Запрошен неподдерживаемый метод | `405` | XML `<error>` с кодом `method_not_allowed` |
 | Ошибка подключения или чтения БД | `503` | XML `<error>` с кодом `database_unavailable` |
+
+### 12.4. Проверить параметризованные GET-запросы
+
+Параметры в URI задают фильтры. Они передаются после `?`, несколько условий соединяются через `&` и применяются одновременно.
+
+| Параметр | Что выбирает |
+|---|---|
+| `balance_id=1` | Остаток с идентификатором 1 |
+| `drug_name=препарат` | Названия, содержащие текст без учёта регистра |
+| `batch_number=00021-A` | Точное совпадение номера партии |
+| `storage_temperature=+2…+8 °C` | Точное совпадение температуры |
+| `min_quantity=1` | Количество не меньше 1 |
+| `max_quantity=100` | Количество не больше 100 |
+| `expiry_after=2027-01-01` | Срок годности не раньше указанной даты |
+| `expiry_before=2027-12-31` | Срок годности не позже указанной даты |
+| `download=1` | Скачивание XML с учётом переданных фильтров |
+
+Все границы диапазонов включаются в результат. Без фильтров API возвращает всю таблицу.
+
+```bash
+curl -i 'http://127.0.0.1/api/stock?balance_id=1'
+curl -i 'http://127.0.0.1/api/stock?min_quantity=1&expiry_before=2027-12-31'
+curl --get --data-urlencode 'drug_name=препарат' 'http://127.0.0.1/api/stock'
+curl -f -o "$HOME/selected-stock.xml" 'http://127.0.0.1/api/stock?balance_id=2&download=1'
+curl -i 'http://127.0.0.1/api/stock?min_quantity=-1'
+```
+
+На исходных данных ожидаются: одна запись с ID 1; одна запись с положительным количеством и сроком до конца 2027 года; две записи с текстом «препарат»; XML-файл с записью ID 2; HTTP 400 и XML `invalid_parameter` для отрицательного количества.
+
+Даты проверяются как действительные календарные даты `YYYY-MM-DD`. Количество допускает 0, идентификатор начинается с 1; оба ограничены значением 4294967295. Пустые фильтры пропускаются. Неизвестные параметры, массивы и перевёрнутые диапазоны возвращают HTTP 400. Если совпадений нет, ответ остаётся HTTP 200 с пустым `<stock_balances/>`.
+
+Внутри API условия SQL выбираются из фиксированного списка, а значения привязываются через PDO `prepare` и `bindValue`. В поиск по названию нельзя внедрить SQL; `%` и `_` ищутся как буквальные символы. [Подготовленные запросы PDO](https://www.php.net/manual/en/pdo.prepare.php).
+
+Проверки на исходных трёх учебных записях запускаются без дополнительных Python-пакетов:
+
+```bash
+python3 "$HOME/pharmacy-lab/tests/test_api.py"
+```
 
 ## 13. Открыть UI и API с Windows
 
@@ -482,13 +528,14 @@ sudo mariadb pharmacy -e "UPDATE stock_balances SET quantity=120 WHERE balance_i
 
 | Файл | Назначение |
 |---|---|
-| `public/api.php` | Проверяет HTTP-метод, устанавливает XML-заголовки, обрабатывает ошибку БД и скачивание файла. |
-| `src/stock.php`, функция `readStock()` | Подключается к MariaDB через PDO и выполняет SELECT шести полей. |
+| `public/api.php` | Проверяет HTTP-метод и URI-параметры, устанавливает XML-заголовки, обрабатывает ошибки и скачивание файла. |
+| `src/stock.php`, функция `stockFilters()` | Проверяет имена параметров, типы, даты и границы диапазонов. |
+| `src/stock.php`, функция `readStock()` | Подключается к MariaDB через PDO, формирует WHERE из разрешённых условий и привязывает значения к подготовленному SELECT. |
 | `src/stock.php`, функция `stockXml()` | Создаёт XML через DOMDocument и текстовые узлы. Это сохраняет кириллицу и экранирует символы `&`, `<`, `>`. |
 | `public/app.js` | Выполняет GET к `/api/stock`, разбирает XML через DOMParser и вставляет значения в таблицу через `textContent`. |
 | `database/schema.sql` | Описывает таблицу, начальные записи и права пользователя чтения. |
 
-SQL-запрос обработчика выглядит так.
+SQL-запрос без фильтров выглядит так.
 
 ```sql
 SELECT balance_id, drug_name, batch_number, expiry_date, quantity,
@@ -496,6 +543,8 @@ SELECT balance_id, drug_name, batch_number, expiry_date, quantity,
 FROM stock_balances
 ORDER BY balance_id;
 ```
+
+При запросе `?balance_id=1` перед `ORDER BY` добавляется `WHERE balance_id = :balance_id`, а число 1 передаётся через `bindValue`, без вставки в SQL-текст. Nginx передаёт строку запроса через `QUERY_STRING` из `/etc/nginx/fastcgi_params`.
 
 [PDO в документации PHP](https://www.php.net/manual/en/book.pdo.php), [DOMDocument](https://www.php.net/manual/en/class.domdocument.php).
 
@@ -510,7 +559,8 @@ ORDER BY balance_id;
 | `dnf` не скачивает `openh264` | Для текущей установки Git повторите `sudo dnf --disable-repo=fedora-cisco-openh264 install -y git`. |
 | `git clone` сообщает `destination path ... already exists` | Если это уже клонированный проект с каталогом `.git`, используйте `git -C "$HOME/pharmacy-lab" pull --ff-only`. Существующие файлы сохраняйте. |
 | `git clone` запрашивает вход в GitHub или сообщает `Repository not found` | Проверьте точный HTTPS-адрес из пункта 7 и наличие временного публичного репозитория на GitHub. После его удаления используйте уже скачанную локальную копию. |
-| После `git pull` на сайте старый код | Обновился каталог `~/pharmacy-lab`. Повторите копирование `public` и `src` в `/var/www/pharmacy` из пункта 9 и выполните `sudo restorecon -R /var/www/pharmacy`. |
+| После `git pull` на сайте старый код | Обновился каталог `~/pharmacy-lab`. Для обновления PHP API выполните `sudo bash "$HOME/pharmacy-lab/scripts/apply.sh"` из пункта 9. |
+| API возвращает HTTP 400 с XML | Проверьте имена и значения URI-параметров по пункту 12.4. Это ошибка запроса, а не подключения к БД. |
 | На Windows не открывается даже стандартная страница Nginx | Проверьте IP, мост и сервис `http` в активной зоне firewalld. |
 | Открывается старая страница Nginx | Проверьте, что установлен `/etc/nginx/nginx.conf` из проекта, `nginx -t` успешен, выполнен restart. |
 | HTTP 502 Bad Gateway | Проверьте `php-fpm`, наличие `/run/php-fpm/pharmacy.sock` и соответствие пути в конфигурации Nginx. |
