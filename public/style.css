@@ -7,7 +7,7 @@
   --primary-hover: #1e40af;
 }
 * { box-sizing: border-box; }
-body { margin: 0; background: #fff; color: var(--ink); font: 15px/1.55 'Onest', 'Segoe UI', Arial, sans-serif; }
+body { margin: 0; background: #f3f3f3; color: var(--ink); font: 15px/1.55 'Onest', 'Segoe UI', Arial, sans-serif; }
 main { display: grid; grid-template-columns: minmax(500px, .75fr) minmax(640px, 1.25fr); align-items: start; gap: 24px; width: 100%; min-width: 1240px; max-width: 1800px; margin: 0 auto; padding: 36px 32px 48px; }
 .page-header { grid-column: 1 / -1; }
 h1 { font-size: 38px; line-height: 1.2; letter-spacing: -.035em; margin: 0; }
