@@ -1,0 +1,518 @@
+# Вариант 21. Fedora + Nginx + MariaDB + XML API
+
+Пошаговый гайд от создания виртуальной машины до демонстрации API. Подготовлено 20 ноября 2026 года.
+
+## 1. Результат лабораторной
+
+Нужно реализовать **API, возвращающее XML по GET-запросу**, для предметной области «Остатки на складе лекарств». Простейший UI показывает данные, полученные именно из API, и позволяет открыть или скачать XML.
+
+| Что открываем | Адрес |
+|---|---|
+| Страница с таблицей | `http://IP-Fedora/` |
+| API с XML | `http://IP-Fedora/api/stock` |
+| Тот же XML как скачиваемый файл | `http://IP-Fedora/api/stock?download=1` |
+
+Рабочая схема стенда выглядит так.
+
+```text
+Браузер / curl
+      │ GET /api/stock
+      ▼
+Nginx, порт 80
+      │ FastCGI через локальный Unix-сокет
+      ▼
+PHP-FPM → PHP-обработчик → SELECT из MariaDB
+      │
+      └── XML, HTTP 200, Content-Type: application/xml; charset=UTF-8
+```
+
+PHP выбран как простой способ связать Nginx и MariaDB. Данные в API каждый раз читаются из таблицы. UI вызывает API через `fetch`, разбирает XML и показывает шесть столбцов.
+
+| Поле задания | Поле БД и XML | Тип MariaDB |
+|---|---|---|
+| Идентификатор остатка | `balance_id` | `INT UNSIGNED`, первичный ключ |
+| Название препарата | `drug_name` | `VARCHAR(200)` |
+| Номер партии | `batch_number` | `VARCHAR(100)` |
+| Срок годности | `expiry_date` | `DATE` |
+| Количество единиц | `quantity` | `INT UNSIGNED` |
+| Температура хранения | `storage_temperature` | `VARCHAR(100)` |
+
+Номер партии хранится текстом, чтобы сохранить ведущие нули. Температура тоже хранится текстом, например `+2…+8 °C`, поскольку условие допускает описание диапазона. В комплект включены три вымышленные учебные записи.
+
+## 2. Что скачать и подготовить на Windows
+
+Для инструкции выбран **Oracle VirtualBox**. Если он уже используется для предыдущих ВМ, создайте в нём новую машину.
+
+1. При необходимости установите VirtualBox для **Windows hosts** с официальной страницы. [Загрузка VirtualBox](https://www.virtualbox.org/wiki/Downloads).
+2. Скачайте **Fedora Workstation 45 Live ISO для Intel/AMD x86_64**. На момент подготовки это актуальный выпуск Workstation, вышедший 3 ноября 2026 года. [Загрузка Fedora](https://fedoraproject.org/workstation/download/).
+3. Сохраните рядом приложенный архив **`pharmacy-lab.zip`**. В нём находятся код API, простой UI, SQL и конфигурации.
+
+Workstation выбрана для удобной первой установки с графическим рабочим столом. Для этой лабораторной используется обычная редакция с пакетным менеджером DNF.
+
+## 3. Создать Fedora VM в VirtualBox
+
+В VirtualBox нажмите **New / Создать** и задайте параметры.
+
+| Параметр | Значение |
+|---|---|
+| Name | `Fedora-Lab21` |
+| ISO Image | скачанный Fedora Workstation x86_64 ISO |
+| Type / OS | Linux |
+| Version | Fedora (64-bit), если доступно |
+| Unattended Installation | выбрать **Skip Unattended Installation**, если этот пункт показан |
+| RAM | **4096 MB**, либо 6144 MB при достаточной памяти компьютера |
+| CPU | **2** виртуальных процессора |
+| Virtual Hard Disk | создать новый диск **40 GB** |
+| Формат диска | VDI, динамический размер, если мастер предлагает выбор |
+
+После создания откройте **Settings → Display**. Для Linux используйте **Graphics Controller = VMSVGA**, Video Memory — **128 MB**. При проблемах с изображением оставьте 3D Acceleration выключенной.
+
+В **Settings → Network → Adapter 1** сначала выберите **NAT** и включите **Cable Connected**. Через NAT удобно выполнить установку и загрузить пакеты.
+
+Запустите ВМ кнопкой **Start**.
+
+## 4. Установить Fedora на виртуальный диск
+
+1. В меню загрузки выберите запуск Fedora Workstation Live. Дождитесь рабочего стола.
+2. Запустите **Install Fedora / Install to Hard Drive**. Названия страниц установщика могут немного отличаться между образами.
+3. Выберите язык **English**, при необходимости добавьте русскую раскладку клавиатуры.
+4. В качестве места установки выберите **созданный виртуальный диск 40 GB**. Используйте автоматическую разметку или вариант использования всего выбранного диска.
+5. Укажите часовой пояс **Europe/Moscow**, если установщик предлагает этот шаг.
+6. Подтвердите сводку и начните установку. Дождитесь её завершения.
+7. Перезагрузите ВМ. В VirtualBox извлеките ISO через **Devices → Optical Drives → Remove disk from virtual drive**, чтобы загрузилась установленная система.
+8. В мастере первого запуска создайте пользователя **student** и свой пароль. Если имя пользователя будет другим, заменяйте `student` в командах подключения ниже.
+
+Откройте приложение **Terminal** через поиск приложений. Сначала проверьте систему.
+
+```bash
+cat /etc/fedora-release
+uname -m
+whoami
+```
+
+Ожидаются Fedora 45, архитектура `x86_64` и ваше имя пользователя.
+
+Обновите систему.
+
+```bash
+sudo dnf upgrade --refresh -y
+sudo reboot
+```
+
+При вводе пароля для `sudo` символы в Terminal не отображаются. После перезагрузки снова откройте Terminal.
+
+## 5. Установить серверные пакеты
+
+Выполните внутри Fedora.
+
+```bash
+sudo hostnamectl set-hostname fedora-lab21
+sudo dnf install -y nginx mariadb-server mariadb php-fpm php-cli php-mysqlnd php-xml policycoreutils-python-utils openssh-server unzip curl
+sudo systemctl enable --now mariadb php-fpm nginx sshd firewalld
+```
+
+Проверьте версии и службы.
+
+```bash
+nginx -v
+mariadb --version
+php -v
+php -m | grep -E 'PDO|pdo_mysql|dom'
+systemctl is-active mariadb php-fpm nginx sshd firewalld
+```
+
+У всех пяти служб ожидается `active`. `php-mysqlnd` предоставляет PHP-драйвер для MariaDB/MySQL, а `php-xml` — инструменты формирования XML.
+
+Используем пакеты из репозиториев Fedora. Фактические номера Nginx, MariaDB и PHP запишите в отчёт по выводу команд.
+
+[Пакет Nginx в Fedora](https://packages.fedoraproject.org/pkgs/nginx/nginx/), [PHP-FPM](https://packages.fedoraproject.org/pkgs/php/php-fpm/), [драйвер PHP MySQL](https://packages.fedoraproject.org/pkgs/php/php-mysqlnd/).
+
+## 6. Настроить сетевой мост
+
+1. Завершите работу Fedora через системное меню **Power Off**.
+2. В VirtualBox откройте **Settings → Network → Adapter 1**.
+3. Измените **Attached to = Bridged Adapter / Сетевой мост**.
+4. В **Name** выберите адаптер основного компьютера, через который сейчас работает интернет — Wi-Fi или Ethernet.
+5. Оставьте **Cable Connected** включённым и запустите Fedora.
+
+В Fedora узнайте адрес.
+
+```bash
+ip -br -4 addr
+ip route
+```
+
+Выберите IPv4 основного сетевого интерфейса. Далее `192.168.1.42` — **пример**, вместо него вводите свой IP Fedora.
+
+Откройте HTTP и SSH в firewalld.
+
+```bash
+sudo firewall-cmd --get-active-zones
+sudo firewall-cmd --get-default-zone
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=ssh
+sudo firewall-cmd --reload
+sudo firewall-cmd --list-services
+```
+
+Эти команды добавляют правила в зону по умолчанию. Если сетевой интерфейс в первой команде привязан к другой зоне, добавляйте `--zone=ИМЯ_АКТИВНОЙ_ЗОНЫ` к командам добавления сервисов и проверки.
+
+В браузере Windows откройте `http://192.168.1.42/`. Пока должна появиться стандартная страница Nginx.
+
+[Сетевые режимы VirtualBox](https://docs.oracle.com/en/virtualization/virtualbox/7.2/user/networkingdetails.html), [открытие сервисов firewalld](https://firewalld.org/documentation/howto/open-a-port-or-service.html).
+
+### Если в сети аудитории мост не получает адрес
+
+Можно выполнить работу через NAT с перенаправлением портов.
+
+1. Выключите Fedora, верните **Adapter 1 → NAT**.
+2. Откройте **Advanced → Port Forwarding** и добавьте правила.
+
+| Name | Protocol | Host IP | Host Port | Guest IP | Guest Port |
+|---|---|---|---|---|---|
+| web | TCP | `127.0.0.1` | `8082` | пусто | `80` |
+| ssh | TCP | `127.0.0.1` | `2222` | пусто | `22` |
+
+После запуска ВМ сайт будет доступен на основном компьютере по `http://127.0.0.1:8082/`, API — по `http://127.0.0.1:8082/api/stock`. Для SSH используйте порт 2222. Такой способ позволяет показать работу с основного компьютера. Для подключения с других устройств сети используйте работающий мост.
+
+## 7. Перенести архив проекта в Fedora
+
+На **основном Windows-компьютере** откройте PowerShell. При сохранении файлов в текущей общей рабочей папке выполните команду с фактическим IP Fedora.
+
+```powershell
+scp "G:\My Drive\БелГУ\output\fedora21\pharmacy-lab.zip" student@192.168.1.42:/home/student/
+```
+
+Если архив сохранён в Downloads, укажите его настоящий путь. При первом подключении проверьте адрес своей ВМ, подтвердите добавление её SSH-ключа и введите пароль пользователя Fedora.
+
+Для варианта NAT из предыдущего раздела команда будет такой.
+
+```powershell
+scp -P 2222 "G:\My Drive\БелГУ\output\fedora21\pharmacy-lab.zip" student@127.0.0.1:/home/student/
+```
+
+Дальше все команды снова выполняются **в Fedora Terminal**.
+
+```bash
+unzip "$HOME/pharmacy-lab.zip" -d "$HOME"
+ls "$HOME/pharmacy-lab"
+```
+
+После распаковки ожидается структура.
+
+```text
+pharmacy-lab/
+  public/
+    index.html       простой UI
+    app.js           GET-запрос к API и построение таблицы
+    style.css        оформление таблицы
+    api.php          обработчик API
+  src/
+    stock.php        запрос к MariaDB и формирование XML
+  database/
+    schema.sql       база, таблица, тестовые данные, пользователь SELECT
+  config/
+    config.php       настройки подключения к БД
+    nginx.conf       конфигурация Nginx
+    pharmacy-pool.conf
+    mariadb-local.cnf
+  example.xml        пример структуры XML
+  GUIDE_RU.md        этот гайд
+```
+
+## 8. Создать базу MariaDB
+
+Задайте локальный адрес прослушивания MariaDB.
+
+```bash
+sudo install -m 0644 "$HOME/pharmacy-lab/config/mariadb-local.cnf" /etc/my.cnf.d/pharmacy-lab.cnf
+sudo systemctl restart mariadb
+```
+
+Выполните SQL-файл **один раз для новой базы**.
+
+```bash
+sudo mariadb --default-character-set=utf8mb4 < "$HOME/pharmacy-lab/database/schema.sql"
+```
+
+SQL создаёт базу `pharmacy`, таблицу `stock_balances`, три учебные записи и пользователя `pharmacy_reader` с правом **SELECT** на эту таблицу.
+
+Проверьте данные администратором.
+
+```bash
+sudo mariadb --default-character-set=utf8mb4 pharmacy -e "SELECT * FROM stock_balances;"
+sudo mariadb -e "SHOW GRANTS FOR 'pharmacy_reader'@'127.0.0.1';"
+```
+
+Ожидаются три записи и разрешение SELECT. Сверьте все шесть полей задания с таблицей из раздела 1.
+
+Для отдельной проверки подключения пользователя API выполните команду.
+
+```bash
+mariadb --protocol=TCP -h 127.0.0.1 -u pharmacy_reader -p pharmacy -e "SELECT COUNT(*) FROM stock_balances;"
+```
+
+Учебный пароль из SQL-файла — **`Lab21-Med-2026!`**. Ожидаемый результат — `3`. Если меняете пароль, измените его и в настройках PHP следующего раздела.
+
+Если `sudo mariadb` на вашей установке запрашивает пароль администратора, используйте `sudo mariadb -u root -p` и пароль, который вы задали при настройке MariaDB. На новой стандартной установке сначала проверяется команда без `-p`.
+
+При повторном выполнении `schema.sql` сообщение `database exists` означает, что база уже создана. Продолжайте с проверок существующей базы.
+
+[Права пользователей MariaDB](https://mariadb.com/docs/server/reference/sql-statements/account-management-sql-statements/grant).
+
+## 9. Разместить приложение и настройки подключения
+
+```bash
+sudo install -d -m 0755 /var/www/pharmacy
+sudo cp -r "$HOME/pharmacy-lab/public" "$HOME/pharmacy-lab/src" /var/www/pharmacy/
+sudo chown -R root:root /var/www/pharmacy
+sudo find /var/www/pharmacy -type d -exec chmod 0755 {} \;
+sudo find /var/www/pharmacy -type f -exec chmod 0644 {} \;
+sudo install -d -o root -g nginx -m 0750 /etc/pharmacy-lab
+sudo install -o root -g nginx -m 0640 "$HOME/pharmacy-lab/config/config.php" /etc/pharmacy-lab/config.php
+```
+
+Настройки подключения лежат в `/etc/pharmacy-lab/config.php`. При необходимости откройте их командой `sudo nano /etc/pharmacy-lab/config.php`.
+
+```php
+<?php
+return [
+    'dsn' => 'mysql:host=127.0.0.1;port=3306;dbname=pharmacy;charset=utf8mb4',
+    'username' => 'pharmacy_reader',
+    'password' => 'Lab21-Med-2026!',
+];
+```
+
+Веб-корень сайта будет `/var/www/pharmacy/public`. Настройки подключения находятся отдельно и читаются PHP.
+
+## 10. Настроить PHP-FPM и SELinux
+
+Добавьте отдельный пул `pharmacy`.
+
+```bash
+sudo install -m 0644 "$HOME/pharmacy-lab/config/pharmacy-pool.conf" /etc/php-fpm.d/pharmacy.conf
+sudo php-fpm -t
+```
+
+В пуле указан пользователь **nginx**, сокет **`/run/php-fpm/pharmacy.sock`**, владелец сокета **nginx** и права **0660**.
+
+Назначьте SELinux-контексты файлам приложения и настройкам.
+
+```bash
+sudo semanage fcontext -a -t httpd_sys_content_t '/var/www/pharmacy(/.*)?'
+sudo semanage fcontext -a -t httpd_config_t '/etc/pharmacy-lab(/.*)?'
+sudo restorecon -Rv /var/www/pharmacy /etc/pharmacy-lab
+sudo setsebool -P httpd_can_network_connect_db on
+sudo systemctl restart php-fpm
+```
+
+Проверьте результат.
+
+```bash
+getenforce
+sudo ls -l /run/php-fpm/pharmacy.sock
+sudo ls -lZ /etc/pharmacy-lab/config.php
+```
+
+SELinux остаётся в состоянии **Enforcing**, а сокет должен принадлежать `nginx:nginx`. При повторной настройке сообщение `File context ... already defined` означает, что правило уже существует. Для изменения существующего правила используйте `semanage fcontext -m` с теми же параметрами вместо `-a`.
+
+[Конфигурация пулов PHP-FPM](https://www.php.net/manual/en/install.fpm.configuration.php), [контексты веб-каталогов в документации Red Hat](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/deploying_web_servers_and_reverse_proxies/setting-up-and-configuring-nginx_deploying-web-servers-and-reverse-proxies).
+
+## 11. Подключить приложение к Nginx
+
+На этой **новой учебной ВМ** сохраните исходную конфигурацию Nginx и установите конфигурацию проекта.
+
+```bash
+sudo cp -a /etc/nginx/nginx.conf /etc/nginx/nginx.conf.before-lab21
+sudo install -m 0644 "$HOME/pharmacy-lab/config/nginx.conf" /etc/nginx/nginx.conf
+sudo restorecon -v /etc/nginx/nginx.conf /etc/php-fpm.d/pharmacy.conf
+sudo nginx -t
+sudo systemctl restart nginx
+```
+
+Ожидается сообщение об успешной проверке конфигурации. Основная маршрутизация из файла выглядит так.
+
+```nginx
+root /var/www/pharmacy/public;
+index index.html;
+
+location = /api/stock {
+    include /etc/nginx/fastcgi_params;
+    fastcgi_param SCRIPT_FILENAME /var/www/pharmacy/public/api.php;
+    fastcgi_pass unix:/run/php-fpm/pharmacy.sock;
+}
+```
+
+Это точный маршрут **`/api/stock` без завершающего `/`**. Nginx передаёт запрос PHP-FPM, а `/` открывает простую HTML-страницу. Входите в API по этому URL.
+
+[Передача запросов в FastCGI из Nginx](https://nginx.org/en/docs/http/ngx_http_fastcgi_module.html).
+
+## 12. Проверить API внутри Fedora
+
+### 12.1. Проверить настоящий GET-запрос
+
+```bash
+curl -i http://127.0.0.1/api/stock
+```
+
+В начале ответа должны быть следующие значения.
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/xml; charset=UTF-8
+```
+
+Далее идёт XML с тремя записями. Сокращённый пример одной записи выглядит так.
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<stock_balances>
+  <stock_balance>
+    <balance_id>1</balance_id>
+    <drug_name>Учебный препарат А</drug_name>
+    <batch_number>00021-A</batch_number>
+    <expiry_date>2027-12-31</expiry_date>
+    <quantity>120</quantity>
+    <storage_temperature>+2…+8 °C</storage_temperature>
+  </stock_balance>
+</stock_balances>
+```
+
+У каждого остатка присутствуют все шесть полей. Дата передаётся в формате `YYYY-MM-DD`.
+
+### 12.2. Проверить скачивание XML
+
+```bash
+curl -f -o "$HOME/medicine-stock.xml" 'http://127.0.0.1/api/stock?download=1'
+cat "$HOME/medicine-stock.xml"
+```
+
+Проверить структуру можно встроенными средствами Python.
+
+```bash
+python3 -c 'import pathlib, xml.etree.ElementTree as E; root=E.parse(pathlib.Path.home()/"medicine-stock.xml").getroot(); print(root.tag, "записей:", len(root))'
+```
+
+Ожидается `stock_balances записей: 3`.
+
+### 12.3. Проверить ограничение метода
+
+```bash
+curl -i -X POST http://127.0.0.1/api/stock
+```
+
+Ожидается **HTTP 405 Method Not Allowed** и XML с кодом `method_not_allowed`. API также поддерживает HEAD для проверки заголовков.
+
+| Ситуация | HTTP | Тело ответа |
+|---|---|---|
+| Получены данные | `200` | `<stock_balances>…</stock_balances>` |
+| Таблица пустая | `200` | `<stock_balances/>` |
+| Запрошен неподдерживаемый метод | `405` | XML `<error>` с кодом `method_not_allowed` |
+| Ошибка подключения или чтения БД | `503` | XML `<error>` с кодом `database_unavailable` |
+
+## 13. Открыть UI и API с Windows
+
+Для сетевого моста откройте в браузере основного компьютера адрес `http://192.168.1.42/`, подставив свой IP Fedora.
+
+На странице должны появиться три записи и все шесть столбцов. Кнопка **Обновить** заново выполняет GET-запрос. Ссылки **Открыть XML** и **Скачать XML** обращаются к тому же API.
+
+Сам API также открывается напрямую — `http://192.168.1.42/api/stock`.
+
+В Windows PowerShell для просмотра заголовков и тела используйте именно `curl.exe`.
+
+```powershell
+curl.exe -i http://192.168.1.42/api/stock
+```
+
+Для NAT-перенаправления вместо IP ВМ используйте `http://127.0.0.1:8082/` и `http://127.0.0.1:8082/api/stock`.
+
+## 14. Показать, что API читает MariaDB
+
+В Fedora измените количество в первой учебной записи через административный SQL-клиент.
+
+```bash
+sudo mariadb pharmacy -e "UPDATE stock_balances SET quantity=125 WHERE balance_id=1;"
+curl -s http://127.0.0.1/api/stock
+```
+
+В XML для `balance_id=1` должно появиться `<quantity>125</quantity>`. На странице нажмите **Обновить** и покажите новое значение.
+
+Такой показ демонстрирует, что ответ формируется из текущих данных MariaDB. При необходимости верните исходное значение.
+
+```bash
+sudo mariadb pharmacy -e "UPDATE stock_balances SET quantity=120 WHERE balance_id=1;"
+```
+
+## 15. Где находится реализация
+
+| Файл | Назначение |
+|---|---|
+| `public/api.php` | Проверяет HTTP-метод, устанавливает XML-заголовки, обрабатывает ошибку БД и скачивание файла. |
+| `src/stock.php`, функция `readStock()` | Подключается к MariaDB через PDO и выполняет SELECT шести полей. |
+| `src/stock.php`, функция `stockXml()` | Создаёт XML через DOMDocument и текстовые узлы. Это сохраняет кириллицу и экранирует символы `&`, `<`, `>`. |
+| `public/app.js` | Выполняет GET к `/api/stock`, разбирает XML через DOMParser и вставляет значения в таблицу через `textContent`. |
+| `database/schema.sql` | Описывает таблицу, начальные записи и права пользователя чтения. |
+
+SQL-запрос обработчика выглядит так.
+
+```sql
+SELECT balance_id, drug_name, batch_number, expiry_date, quantity,
+       storage_temperature
+FROM stock_balances
+ORDER BY balance_id;
+```
+
+[PDO в документации PHP](https://www.php.net/manual/en/book.pdo.php), [DOMDocument](https://www.php.net/manual/en/class.domdocument.php).
+
+## 16. Если не работает
+
+| Симптом | Что проверить |
+|---|---|
+| Fedora снова запускает установщик после перезагрузки | Извлеките ISO из виртуального оптического привода. |
+| Чёрный экран рабочего стола | Проверьте VMSVGA, объём видеопамяти и отключение 3D Acceleration. |
+| Не работает `sudo` | У пользователя должны быть административные права. Проверьте `groups` — обычно в списке есть `wheel`. |
+| `dnf` не скачивает пакеты | Верните NAT, проверьте интернет и время в ВМ. После установки можно снова включить мост. |
+| На Windows не открывается даже стандартная страница Nginx | Проверьте IP, мост и сервис `http` в активной зоне firewalld. |
+| Открывается старая страница Nginx | Проверьте, что установлен `/etc/nginx/nginx.conf` из проекта, `nginx -t` успешен, выполнен restart. |
+| HTTP 502 Bad Gateway | Проверьте `php-fpm`, наличие `/run/php-fpm/pharmacy.sock` и соответствие пути в конфигурации Nginx. |
+| API возвращает HTTP 503 с XML | Проверьте MariaDB, пользователя `pharmacy_reader`, пароль, расширение `pdo_mysql` и SELinux boolean. |
+| HTTP 403 для файлов сайта | Проверьте права каталогов и SELinux-контекст `/var/www/pharmacy`. |
+| HTTP 404 для API | Используйте точный путь `/api/stock` без конечного `/`. |
+| В UI пусто или отображается ошибка | Откройте API напрямую и посмотрите HTTP-код. Через F12 → Network проверьте GET `/api/stock`. |
+| В браузере `file://` страница не загружает данные | Откройте UI через Nginx по `http://IP-Fedora/`. |
+| Кириллица отображается неверно | Проверьте `utf8mb4` в базе, DSN `charset=utf8mb4` и XML-заголовок UTF-8. |
+
+Команды для диагностики внутри Fedora.
+
+```bash
+sudo systemctl status nginx php-fpm mariadb --no-pager
+sudo nginx -t
+sudo php-fpm -t
+sudo ss -ltnp | grep -E ':80 |:3306 '
+sudo ls -lZ /run/php-fpm/pharmacy.sock
+sudo journalctl -u nginx -u php-fpm -u mariadb -n 60 --no-pager
+sudo tail -n 40 /var/log/nginx/error.log
+sudo tail -n 40 /var/log/php-fpm/error.log
+sudo ausearch -m AVC -ts recent
+getsebool httpd_can_network_connect_db
+```
+
+Если PHP сообщает `could not find driver`, проверьте пакет `php-mysqlnd`, затем перезапустите PHP-FPM. Если в журнале SELinux есть запрет доступа, сверяйте путь и контекст с разделом 10.
+
+## 17. Порядок демонстрации преподавателю
+
+1. Покажите Fedora и её адрес — `cat /etc/fedora-release`, `ip -br -4 addr`.
+2. Покажите службы и версии Nginx, MariaDB, PHP-FPM.
+3. Покажите структуру таблицы — `sudo mariadb pharmacy -e "DESCRIBE stock_balances;"`.
+4. Выполните **GET `/api/stock`** через `curl -i` и покажите HTTP 200, XML Content-Type и шесть полей.
+5. Откройте простую страницу на Windows и нажмите **Открыть XML**, затем **Скачать XML**.
+6. Измените количество одной записи в MariaDB и обновите UI/API.
+7. При необходимости покажите ответ 405 на POST и объясните, что по заданию реализовано чтение через GET.
+
+Для отчёта пригодятся скриншоты ВМ, работающих служб, структуры таблицы, GET-ответа и простой страницы. В тексте укажите выбранные типы данных, структуру XML и маршрут API.
+
+## 18. Что проверено при подготовке
+
+Проверены PHP-синтаксис и работа обработчика с отдельной тестовой MariaDB 11.8.8 под Windows на PHP 8.4.28. Проверены GET с тремя строками, все шесть полей, UTF-8, ведущие нули номера партии, нулевое количество, экранирование XML, пустая таблица, скачивание файла, HEAD, ответ 405 на POST, ответ 503 при недоступной БД и ограничение пользователя правом SELECT. UI проверен в браузере, включая обновление таблицы.
+
+Fedora VM в ходе подготовки не создавалась. Установка Fedora, конфигурация Nginx/PHP-FPM и правила SELinux/firewalld должны пройти приведённые проверки внутри вашей новой ВМ. Для примера выбраны VirtualBox, Fedora Workstation 45 и PHP в качестве обработчика API.

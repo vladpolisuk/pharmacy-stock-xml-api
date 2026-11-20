@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Остатки на складе лекарств</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <h1>Остатки на складе лекарств</h1>
+    <p>Вариант 21 · Учебные данные</p>
+    <nav aria-label="Действия с данными">
+      <button id="refresh" type="button">Обновить</button>
+      <a href="/api/stock" target="_blank" rel="noopener">Открыть XML</a>
+      <a href="/api/stock?download=1">Скачать XML</a>
+    </nav>
+    <p id="status" role="status" aria-live="polite">Загрузка…</p>
+    <div class="table-scroll">
+      <table>
+        <caption class="sr-only">Текущие остатки из API</caption>
+        <thead>
+          <tr>
+            <th scope="col">Идентификатор остатка</th>
+            <th scope="col">Название препарата</th>
+            <th scope="col">Номер партии</th>
+            <th scope="col">Срок годности</th>
+            <th scope="col">Количество единиц</th>
+            <th scope="col">Температура хранения</th>
+          </tr>
+        </thead>
+        <tbody id="stock"></tbody>
+      </table>
+    </div>
+  </main>
+</body>
+</html>

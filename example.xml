@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<stock_balances>
+  <stock_balance>
+    <balance_id>1</balance_id>
+    <drug_name>Учебный препарат А</drug_name>
+    <batch_number>00021-A</batch_number>
+    <expiry_date>2027-12-31</expiry_date>
+    <quantity>120</quantity>
+    <storage_temperature>+2…+8 °C</storage_temperature>
+  </stock_balance>
+  <stock_balance>
+    <balance_id>2</balance_id>
+    <drug_name>Учебный препарат Б</drug_name>
+    <batch_number>00022-B</batch_number>
+    <expiry_date>2028-06-30</expiry_date>
+    <quantity>45</quantity>
+    <storage_temperature>+15…+25 °C</storage_temperature>
+  </stock_balance>
+  <stock_balance>
+    <balance_id>3</balance_id>
+    <drug_name>Тестовый раствор В</drug_name>
+    <batch_number>00023-C</batch_number>
+    <expiry_date>2027-09-15</expiry_date>
+    <quantity>0</quantity>
+    <storage_temperature>+2…+8 °C</storage_temperature>
+  </stock_balance>
+</stock_balances>
