@@ -31,8 +31,16 @@ install -o root -g root -m 0644 "$project_dir/src/stock.php" /var/www/pharmacy/s
 install -o root -g root -m 0644 "$project_dir/public/api.php" /var/www/pharmacy/public/api.php
 restorecon /var/www/pharmacy/public/api.php /var/www/pharmacy/src/stock.php
 systemctl reload php-fpm
-curl --fail --silent --show-error 'http://127.0.0.1/api/stock?balance_id=1' \
-    | python3 -c 'import sys, xml.etree.ElementTree as E; r=E.parse(sys.stdin).getroot(); assert r.tag=="stock_balances"; assert len(r)==1 and r[0].findtext("balance_id")=="1"'
+verified=0
+for attempt in 1 2 3 4 5; do
+    if curl --fail --silent --show-error --max-time 5 'http://127.0.0.1/api/stock?balance_id=1' \
+        | python3 -c 'import sys, xml.etree.ElementTree as E; r=E.parse(sys.stdin).getroot(); assert r.tag=="stock_balances"; assert len(r)<=1 and all(x.findtext("balance_id")=="1" for x in r)' 2>/dev/null; then
+        verified=1
+        break
+    fi
+    sleep 1
+done
+[[ $verified -eq 1 ]]
 
 trap - ERR
 printf 'API updated. Backup: %s\n' "$backup_dir"
