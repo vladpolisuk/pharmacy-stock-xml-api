@@ -15,12 +15,13 @@ const examples = {
 const form = document.querySelector('#filters');
 const statusLine = document.querySelector('#status');
 const tableBody = document.querySelector('#stock');
-const tableMessage = document.querySelector('#table-message');
-const count = document.querySelector('#record-count');
+const tableContainer = document.querySelector('#view-table');
+const viewMessage = document.querySelector('#view-message');
 const httpStatus = document.querySelector('#http-status');
 const responsePanel = document.querySelector('#response-panel');
 const responseBody = document.querySelector('#response-body');
 const responseHeaders = document.querySelector('#response-headers');
+const responseTabs = [...document.querySelectorAll('[data-response-view]')];
 const exampleButtons = [...document.querySelectorAll('[data-example]')];
 const actionButtons = [document.querySelector('#send'), document.querySelector('#clear'), ...exampleButtons];
 let lastRequestURL = '';
@@ -42,9 +43,10 @@ function updatePreview() {
   const downloadURL = new URL(url);
   downloadURL.searchParams.set('download', '1');
   document.querySelector('#download-xml').href = downloadURL.href;
-  document.querySelector('#request-hint').textContent = lastRequestURL && lastRequestURL !== url.href
-    ? 'Параметры изменены. Выполните GET, чтобы получить ответ для нового запроса.'
-    : 'Пустые поля пропускаются, заполненные условия применяются одновременно.';
+  const changed = lastRequestURL && lastRequestURL !== url.href;
+  const hint = document.querySelector('#request-hint');
+  hint.hidden = !changed;
+  hint.textContent = changed ? 'Параметры изменены. Выполните GET, чтобы обновить ответ.' : '';
 }
 
 function setExample(name) {
@@ -65,7 +67,7 @@ function setExample(name) {
 
 function showRecords(xml) {
   if (xml.documentElement.tagName !== 'stock_balances') {
-    throw new Error('Ответ API имеет неожиданный формат. Исходный ответ показан выше.');
+    throw new Error('Ответ API имеет неожиданный формат. Откройте вкладку XML.');
   }
   const records = [...xml.documentElement.children];
   const fragment = document.createDocumentFragment();
@@ -79,11 +81,19 @@ function showRecords(xml) {
     fragment.appendChild(row);
   }
   tableBody.replaceChildren(fragment);
-  count.textContent = `Записей: ${records.length}`;
-  tableMessage.textContent = records.length
-    ? 'Значения взяты из XML-ответа выше. Отображаются все шесть полей.'
-    : 'Совпадений нет. Сервер вернул успешный ответ с пустым списком.';
+  tableContainer.hidden = false;
+  viewMessage.hidden = true;
   return records.length;
+}
+
+function selectResponseView(view, focus = false) {
+  for (const tab of responseTabs) {
+    const selected = tab.dataset.responseView === view;
+    tab.setAttribute('aria-selected', String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+    document.getElementById(tab.getAttribute('aria-controls')).hidden = !selected;
+    if (selected && focus) tab.focus();
+  }
 }
 
 function appendSyntax(parent, className, text) {
@@ -166,14 +176,15 @@ async function runRequest() {
   responsePanel.setAttribute('aria-busy', 'true');
   httpStatus.className = 'http-status';
   httpStatus.textContent = 'Загрузка…';
-  document.querySelector('#response-url').textContent = url.href;
-  statusLine.textContent = 'Выполняется GET-запрос к серверу…';
-  responseBody.textContent = 'Ожидание ответа…';
+  statusLine.textContent = 'Записей: —';
+  responseBody.textContent = '—';
   responseHeaders.textContent = '—';
   tableBody.replaceChildren();
-  count.textContent = '—';
-  tableMessage.textContent = 'Ожидание XML-ответа.';
+  tableContainer.hidden = false;
+  viewMessage.textContent = '';
+  viewMessage.hidden = true;
   const timeout = setTimeout(() => requestController.abort(), 15000);
+  let receivedResponse = false;
 
   try {
     const response = await fetch(url.href, {
@@ -184,6 +195,7 @@ async function runRequest() {
     });
     const text = await response.text();
     if (requestId !== activeRequest) return;
+    receivedResponse = true;
     httpStatus.textContent = `HTTP ${response.status}${response.statusText ? ` ${response.statusText}` : ''}`;
     httpStatus.classList.add(response.ok ? 'success' : 'failure');
     highlightHeaders([...response.headers].map(([name, value]) => `${name}: ${value}`).join('\n'));
@@ -191,30 +203,30 @@ async function runRequest() {
 
     const xml = new DOMParser().parseFromString(text, 'application/xml');
     if (xml.querySelector('parsererror')) {
-      throw new Error('Сервер вернул некорректный XML. Исходный ответ показан выше.');
+      throw new Error('Сервер вернул некорректный XML. Откройте вкладку XML.');
     }
     if (!response.ok) {
       throw new Error(xml.querySelector('error > message')?.textContent || `Ошибка HTTP ${response.status}.`);
     }
     const total = showRecords(xml);
-    statusLine.textContent = `Ответ получен. HTTP ${response.status}, записей: ${total}.`;
+    statusLine.textContent = `Записей: ${total}`;
   } catch (error) {
     if (requestId !== activeRequest) return;
+    let message = error.message || 'Не удалось получить ответ сервера.';
     if (error.name === 'AbortError') {
       httpStatus.textContent = 'Нет ответа';
       httpStatus.classList.add('failure');
-      responseBody.textContent = 'Ответ не получен за 15 секунд.';
-      statusLine.textContent = 'Время ожидания истекло. Проверьте доступность API и повторите запрос.';
-    } else {
-      statusLine.textContent = error.message || 'Не удалось получить ответ сервера.';
-      if (responseBody.textContent === 'Ожидание ответа…') {
-        httpStatus.textContent = 'Нет ответа';
-        httpStatus.classList.add('failure');
-        responseBody.textContent = 'Тело ответа не получено.';
-      }
+      message = 'Ответ не получен за 15 секунд. Повторите запрос.';
+    } else if (!receivedResponse) {
+      httpStatus.textContent = 'Нет ответа';
+      httpStatus.classList.add('failure');
+      message = 'Не удалось подключиться к API.';
     }
-    count.textContent = 'Нет данных';
-    tableMessage.textContent = 'Таблица не построена. Проверьте статус и ответ сервера выше.';
+    if (!receivedResponse) responseBody.textContent = message;
+    statusLine.textContent = 'Записей: —';
+    tableContainer.hidden = true;
+    viewMessage.textContent = message;
+    viewMessage.hidden = false;
   } finally {
     clearTimeout(timeout);
     if (requestId === activeRequest) {
@@ -241,6 +253,20 @@ for (const button of exampleButtons) {
   button.addEventListener('click', () => {
     setExample(button.dataset.example);
     runRequest();
+  });
+}
+for (const tab of responseTabs) {
+  tab.addEventListener('click', () => selectResponseView(tab.dataset.responseView));
+  tab.addEventListener('keydown', (event) => {
+    const index = responseTabs.indexOf(tab);
+    let next;
+    if (event.key === 'ArrowRight') next = (index + 1) % responseTabs.length;
+    else if (event.key === 'ArrowLeft') next = (index + responseTabs.length - 1) % responseTabs.length;
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = responseTabs.length - 1;
+    else return;
+    event.preventDefault();
+    selectResponseView(responseTabs[next].dataset.responseView, true);
   });
 }
 updatePreview();
